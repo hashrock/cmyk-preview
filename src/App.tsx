@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { extractIcc } from './icc'
+import { makeRgbProfile, RGB_SPACES } from './icc-gen'
 import { PAPERS, type Layout, type Paper } from './paper'
 import { CancelledError, createClient } from './protocol'
 import { buildView, computeStats, type RenderResult, type ViewMode } from './views'
@@ -8,7 +9,10 @@ const MagazineView = lazy(() => import('./MagazineView'))
 
 const MAX_SIDE = 4096
 
+// 先頭 2 つは再配布可能で同梱。残りは手元にあれば読み込む（public/profiles/LICENSES.md 参照）
 const BUILTIN_PROFILES = [
+  { id: 'jc2011c', file: 'JapanColor2011Coated.icc', label: 'Japan Color 2011 Coated', tac: 350 },
+  { id: 'fogra39l', file: 'FOGRA39L_coated.icc', label: 'FOGRA39L Coated', tac: 330 },
   { id: 'jc2001c', file: 'JapanColor2001Coated.icc', label: 'Japan Color 2001 Coated', tac: 350 },
   { id: 'jc2001u', file: 'JapanColor2001Uncoated.icc', label: 'Japan Color 2001 Uncoated', tac: 310 },
   { id: 'jc2002n', file: 'JapanColor2002Newspaper.icc', label: 'Japan Color 2002 Newspaper', tac: 250 },
@@ -45,7 +49,6 @@ const INPUT_MODES = [
   { value: 'p3', label: 'Display P3 として扱う' },
 ] as const
 type InputMode = (typeof INPUT_MODES)[number]['value']
-const RGB_PROFILE_FILES: Record<string, string> = { adobergb: 'AdobeRGB1998.icc', p3: 'DisplayP3.icc' }
 
 type Profile = { id: string; label: string; tac: number }
 type Source = {
@@ -95,7 +98,7 @@ const pct = (v: number) => `${Math.round((v / 255) * 100)}`
 export default function App() {
   const client = useMemo(() => createClient(), [])
   const [profiles, setProfiles] = useState<Profile[]>([])
-  const [profileId, setProfileId] = useState('jc2001c')
+  const [profileId, setProfileId] = useState('jc2011c')
   const [intent, setIntent] = useState(0)
   const [bpc, setBpc] = useState(true)
   const [paperWhite, setPaperWhite] = useState(false)
@@ -142,6 +145,11 @@ export default function App() {
       }
       if (cancelled) return
       setProfiles((prev) => [...loaded, ...prev.filter((p) => !loaded.some((l) => l.id === p.id))])
+      // 既定のプロファイルが無い環境では読み込めた最初のものを使う
+      if (loaded.length && !loaded.some((p) => p.id === 'jc2011c')) {
+        setProfileId((cur) => (loaded.some((p) => p.id === cur) ? cur : loaded[0].id))
+        setTacLimit(loaded[0].tac)
+      }
       if (loaded.length === 0) setError('同梱プロファイルが見つかりません。CMYK の .icc ファイルをドロップしてください。')
     })()
     return () => {
@@ -169,9 +177,7 @@ export default function App() {
       let p = loadedRgb.current.get(id)
       if (!p) {
         p = (async () => {
-          const res = await fetch(`${import.meta.env.BASE_URL}profiles/${RGB_PROFILE_FILES[id]}`)
-          if (!res.ok) throw new Error(`${RGB_PROFILE_FILES[id]} が見つかりません`)
-          const bytes = await res.arrayBuffer()
+          const bytes = makeRgbProfile(RGB_SPACES[id as keyof typeof RGB_SPACES])
           const r = await client.call({ type: 'loadProfile', id, bytes, kind: 'rgb' }, [bytes])
           return r.type === 'profileLoaded' ? r.name : id
         })()

@@ -25,3 +25,6 @@ dist-ssr
 
 # ICC profiles copied from local apps (license: not for redistribution here)
 public/profiles/*.icc
+# 再配布可能なプロファイルは同梱する（public/profiles/LICENSES.md 参照）
+!public/profiles/JapanColor2011Coated.icc
+!public/profiles/FOGRA39L_coated.icc
